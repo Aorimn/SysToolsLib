@@ -100,6 +100,8 @@
 #                   Renamed arguments ServiceUser and ServicePassword to the  #
 #                   more standard UserName and Password.                      #
 #                   Also added the standard argument -Credential.             #
+#    2018-04-03 RCL Remove Log usage in PSThreads, use Information stream     #
+#                   instead                                                   #
 #                                                                             #
 ###############################################################################
 #Requires -version 2
@@ -236,10 +238,10 @@ Param(
 
   [Parameter(ParameterSetName='Setup', Mandatory=$true)]
   [String]$UserName,              # Set the service to run as this user
-  
+
   [Parameter(ParameterSetName='Setup', Mandatory=$false)]
   [String]$Password,              # Use this password for the user
-  
+
   [Parameter(ParameterSetName='Setup2', Mandatory=$false)]
   [System.Management.Automation.PSCredential]$Credential, # Service account credential
 
@@ -330,7 +332,7 @@ Function Now {
       $ms = $true
       $nsSuffix = "000"
     }
-  } 
+  }
   if ($ms) {
     $now += ".{0:000}$nsSuffix" -f $Date.MilliSecond
   }
@@ -491,8 +493,14 @@ Function Receive-PSThread () {
     try {
       $PSThread.PSPipeline.EndInvoke($PSThread.Handle) # Output the thread pipeline output
     } catch {
+      Log "Thread errors:`n$($_ -join "`n")"
       $_ # Output the thread pipeline error
     }
+
+    # Log information stream messages
+    $InformationMessages = $PSThread.PSPipeline.Streams.Information.MessageData
+    Log "Thread logs:`n$($InformationMessages -join "`n")"
+
     if ($AutoRemove) {
       $PSThread.RunSpace.Close()
       $PSThread.PSPipeline.Dispose()
@@ -599,7 +607,7 @@ Function Receive-PipeMessage () {
     $Message = $sr.Readline()
     $Message
   } catch {
-    Log "Error receiving pipe message: $_"
+    Write-Information "Error receiving pipe message: $_"
   } finally {
     if ($sr) {
       $sr.Dispose() # Release resources
@@ -645,12 +653,12 @@ Function Start-PipeHandlerThread () {
     logDir = $logDir
     logFile = $logFile
     currentUserName = $currentUserName
-  } -Functions Now, Log, Receive-PipeMessage -ScriptBlock {
+  } -Functions Receive-PipeMessage -ScriptBlock {
     Param($pipeName, $pipeThreadName)
     try {
       Receive-PipeMessage "$pipeName" # Blocks the thread until the next message is received from the pipe
     } catch {
-      Log "$pipeThreadName # Error: $_"
+      Write-Information "$pipeThreadName # Error: $_"
       throw $_ # Push the error back to the main thread
     }
   } -Name $pipeThreadName -Event $Event -Arguments $pipeName, $pipeThreadName
@@ -763,7 +771,7 @@ $source = @"
       AutoLog = true;
 
       eventLog = new System.Diagnostics.EventLog();                     // EVENT LOG [
-      if (!System.Diagnostics.EventLog.SourceExists(ServiceName)) {         
+      if (!System.Diagnostics.EventLog.SourceExists(ServiceName)) {
         System.Diagnostics.EventLog.CreateEventSource(ServiceName, "$logName");
       }
       eventLog.Source = ServiceName;
@@ -806,7 +814,7 @@ $source = @"
         Win32Exception w32ex = e as Win32Exception; // Try getting the WIN32 error code
         if (w32ex == null) { // Not a Win32 exception, but maybe the inner one is...
           w32ex = e.InnerException as Win32Exception;
-        }    
+        }
         if (w32ex != null) {    // Report the actual WIN32 error
           serviceStatus.dwWin32ExitCode = w32ex.NativeErrorCode;
         } else {                // Make up a reasonable reason
@@ -844,7 +852,7 @@ $source = @"
         Win32Exception w32ex = e as Win32Exception; // Try getting the WIN32 error code
         if (w32ex == null) { // Not a Win32 exception, but maybe the inner one is...
           w32ex = e.InnerException as Win32Exception;
-        }    
+        }
         if (w32ex != null) {    // Report the actual WIN32 error
           serviceStatus.dwWin32ExitCode = w32ex.NativeErrorCode;
         } else {                // Make up a reasonable reason
@@ -969,7 +977,7 @@ if ($Setup) {                   # Install the service
     Write-Debug "Installation is necessary" # Also avoids a ScriptAnalyzer warning
     # And continue with the installation.
   }
-  if (!(Test-Path $installDir)) {											 
+  if (!(Test-Path $installDir)) {
     New-Item -ItemType directory -Path $installDir | Out-Null
   }
   # Copy the service script into the installation directory
